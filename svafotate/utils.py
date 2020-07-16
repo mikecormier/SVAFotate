@@ -1,0 +1,81 @@
+import os
+import sys
+
+
+
+def process_bed_source(bed_file):
+    ## process bed file containing SV AFs
+    ## save info into datas in source specific manner
+    ## create source specific lists for use in pyranges
+
+    from collections import defaultdict
+    import gzip
+    import io
+
+    sources = set()
+    datas = defaultdict(lambda: defaultdict(list))
+    bed_lists = defaultdict(lambda: defaultdict(list))
+    bed_headers = []
+
+    bed = gzip.open(bed_file, "rt", encoding="utf-8") if bed_file.endswith(".gz") else io.open(bed_file, "rt", encoding="utf-8")
+    print("\nReading the following data source file: {}".format(bed_file))
+
+    header = []
+    header_found = False
+    features = ["chrom","start","end","svtype","sv_id"]
+    for line in bed:
+
+        ## get header
+        if line.startswith("#"):
+            header = line.strip().replace("#","").split("\t")
+            header_found = True
+            bed_headers.append(header[3])
+            bed_headers.extend(header[6:len(header)])
+            continue
+
+        ## Check for header
+        if header_found == False:
+            raise ValueError("A header is required in the bed source file")
+
+        ## Set up data
+        line_dict = dict(zip(header, line.strip().split("\t")))
+        source = line_dict["SOURCE"]
+        sv_id = line_dict["SV_ID"]
+
+        ## Collect info
+        datas[source][sv_id].append(line_dict["SVTYPE"])
+        datas[source][sv_id].extend([line_dict[field] for field in header[6:len(header)]])
+    
+        ## add freature info for
+        for i,key in enumerate(features):
+            bed_lists[source][features[i]].append(line_dict[key.upper()])
+
+        ## add sources sources 
+        sources.add(source)
+
+    bed.close()
+
+    return(sources,datas,bed_lists, bed_headers)
+
+
+def process_pickled_source(pickled_source):
+
+    import pickle
+
+    print("\nReading pickled data source")
+    pickle_file = open(pickled_source,"rb")
+    pickled_data = pickle.load(pickle_file)
+    pickle_file.close()
+    
+    return(pickled_data["sources"], pickled_data["datas"], pickled_data["bed_lists"], pickled_data["bed_headers"])
+
+
+def get_feature(source,my_list,col,datas):
+    ## takes a list of SV_ID_b and returns the feature for the specified col
+    ## returns list of requested feature
+    features = []
+    for i in my_list:
+        feature = datas[source][i][col]
+        if feature != "NA": 
+            features.append(feature)
+    return(features)

@@ -8,19 +8,20 @@ import argparse
 import multiprocessing
 import io
 from collections import defaultdict
+from .utils import get_feature, process_bed_source, process_pickled_source
 
 
-########################################
-##          Global Variables          ##
-########################################
+###################################################################################################
+####                                           Global Variables                                ####
+###################################################################################################
 
 
 extra_annotation_choices = ["all", "mf", "best", "pops", "AFR", "AMR", "EAS", "EUR", "OTH", "SAS", "full", "mis"]
 
 
-########################################
-##          Parser Arguments          ##
-########################################
+###################################################################################################
+####                                           Argument Parser                                 ####
+###################################################################################################
 
 def add_annotation(parser):
 
@@ -37,33 +38,39 @@ def add_annotation(parser):
     req.add_argument("-v", "--vcf",
                      metavar="INPUT VCF",
                      required = True,
-                     help="Path and/or name of the VCF file to annotate")
+                     help="Path and/or name of the VCF file to annotate"
+    )
 
     req.add_argument("-o", "--out",
                      metavar="OUTPUT VCF",
                      required = True,
-                     help="Path and/or name of the output VCF file")
+                     help="Path and/or name of the output VCF file"
+    )
 
     req_one.add_argument("-b", "--bed",
                      metavar="SOURCE BED",
-                     help="Path and/or name of the combined sources AF bed file. (--pickled-source can be used instead of --bed) (NOTE: --bed takes high priority then --pickled-source")
+                     help="Path and/or name of the combined sources AF bed file. (--pickled-source can be used instead of --bed) (NOTE: --bed takes high priority then --pickled-source"
+    )
 
     req_one.add_argument("-p", "--pickled-source",
                          metavar = "Pickled Source Data",
-                         help = "Path and/or name of the pickled source data to use. (--bed can be used instead of --pickled-source) (NOTE: if --bed is provided, --pickled-source is ignored.)")
+                         help = "Path and/or name of the pickled source data to use. (--bed can be used instead of --pickled-source) (NOTE: if --bed is provided, --pickled-source is ignored.)"
+    )
 
     opt.add_argument("-f", "--minf",
                    metavar="MINIMUM OVERLAP FRACTION",
                    nargs = "*",
                    help=("A space sperated list of minimum reciprocal overlap fractions required between SVs for each source"
                          " listed with the `-s` option. If `-s` is not used, only the first minf will be used and will be applied"
-                         " to all sources. minf values must be between 0.0 and 1.0. (Defualt = 0.001)"))
+                         " to all sources. minf values must be between 0.0 and 1.0. (Defualt = 0.001)")
+    )
 
     opt.add_argument("-s", "--sources",
                    metavar="SOURCES TO ANNOTATE",
                    nargs = "*",
                    help=("Space sperated list of data sources to use for annotation. If '-s' is not used, all sources available in the"
-                         " source bed file will be used. (Example: ' -s CCDG CEPH gnomAD 1000G_Smoove ' )"))
+                         " source bed file will be used. (Example: ' -s CCDG CEPH gnomAD 1000G_Smoove ' )")
+    )
 
     opt.add_argument("-a", "--ann",
                    metavar="EXTRA ANNOTATIONS",
@@ -71,87 +78,28 @@ def add_annotation(parser):
                    choices = extra_annotation_choices,
                    help=("By default, only the maxAF, max Hets and Homalt counts, and max PopAF are annotated in the output VCF file."
                          " `-a` can be used to add additional anntations, with each anntotation seperated by a space."
-                         " (Example ' -a mf best pops ' ). Choices = [{}]").format(", ".join(extra_annotation_choices)))
+                         " (Example ' -a mf best pops ' ). Choices = [{}]").format(", ".join(extra_annotation_choices))
+    )
 
     opt.add_argument("-ci", "--ci",
                    metavar="USE CI BOUNDARIES",
                    choices=["in","out"],
-                   help="If argument selected, use 'inner' or 'outer' confidence intervals (CIPOS95, CIEND95) for SV boundaries. Choices = [in, out]")
+                   help="If argument selected, use 'inner' or 'outer' confidence intervals (CIPOS95, CIEND95) for SV boundaries. Choices = [in, out]"
+    )
 
     opt.add_argument("--cpu",
                    metavar="CPU Count",
                    default = 1,
-                   help="The number of cpus to use for multi-threading (Default = 1)")
+                   help="The number of cpus to use for multi-threading (Default = 1)"
+    )
 
     p.set_defaults(func=annotate)
 
-########################################
-##              Functions             ##
-########################################
-
-def process_bed_source(bed_file):
-
-    ## process bed file containing SV AFs
-    ## save info into datas in source specific manner
-    ## create source specific lists for use in pyranges
-
-    sources = set()
-    datas = defaultdict(lambda: defaultdict(list))
-    bed_lists = defaultdict(lambda: defaultdict(list))
-    bed_headers = []
-
-    bed = gzip.open(bed_file, "rt", encoding="utf-8") if bed_file.endswith(".gz") else io.open(bed_file, "rt", encoding="utf-8")
-    print("\nReading the following data source file: {}".format(bed_file))
-
-    header = []
-    header_found = False
-    features = ["chrom","start","end","svtype","sv_id"]
-    for line in bed:
-
-        ## get header
-        if line.startswith("#"):
-            header = line.strip().replace("#","").split("\t")
-            header_found = True
-            bed_headers.append(header[3])
-            bed_headers.extend(header[6:len(header)])
-            continue
-
-        ## Check for header
-        if header_found == False:
-            raise ValueError("A header is required in the bed source file")
-
-        ## Set up data
-        line_dict = dict(zip(header, line.strip().split("\t")))
-        source = line_dict["SOURCE"]
-        sv_id = line_dict["SV_ID"]
-
-        ## Collect info
-        datas[source][sv_id].append(line_dict["SVTYPE"])
-        datas[source][sv_id].extend([line_dict[field] for field in header[6:len(header)]])
-    
-        ## add freature info for
-        for i,key in enumerate(features):
-            bed_lists[source][features[i]].append(line_dict[key.upper()])
-
-        ## add sources sources 
-        sources.add(source)
-
-    bed.close()
-
-    return(souces,datas,bed_lists, bed_headers)
 
 
-def process_pickled_source(pickled_source):
-
-    import pickle
-
-    print("\nReading pickled data source")
-    pickle_file = open(pickled_source,"rb")
-    pickled_data = pickle.load(pickle_file)
-    pickle_file.close()
-    
-    return(pickled_data["sources"], pickled_data["datas"], pickled_data["bed_lists"], pickled_data["bed_headers"])
-
+###################################################################################################
+####                                           Functions                                       ####
+###################################################################################################
 
 def get_header_types(bed_headers):
 
@@ -366,99 +314,6 @@ def get_best(my_dict,source,datas):
     return(best)
 
 
-def create_max_annotations(my_list,vcf,req_sources):
-    ## for each item in the list
-    ## create Max_AF,Max_Het,Max_HomAlt annotations
-    for i in my_list:
-        af = ["Max",str(i),"AF"]
-        vcf.add_info_to_header({"ID": "_".join(af), "Description": "The maximum " + str(i) + " AF from all matching SVs across all specified data sources (" + ",".join(req_sources) + ")", "Type": "Float", "Number": "1"})
-        het = ["Max",str(i),"Het"]
-        vcf.add_info_to_header({"ID": "_".join(het), "Description": "The maximum " + str(i) + " Het count from all matching SVs across all specified data sources (" + ",".join(req_sources) + ")", "Type": "Integer", "Number": "1"})
-        homalt = ["Max",str(i),"HomAlt"]
-        vcf.add_info_to_header({"ID": "_".join(homalt), "Description": "The maximum " + str(i) + " HomAlt count from all matching SVs across all specified data sources (" + ",".join(req_sources) + ")", "Type": "Integer", "Number": "1"})
-
-
-def create_best_annotations(source,my_list,vcf):
-    ## for each item in the list
-    ## create Best_source_AF,Best_source_Het,Best_source_HomAlt annotations
-    for i in my_list:
-        af = ["Best",str(source),str(i),"AF"]
-        vcf.add_info_to_header({"ID": "_".join(af), "Description": "The best " + str(i) + " AF match for " + str(source), "Type": "Float", "Number": "1"})
-        het = ["Best",str(source),str(i),"Het"]
-        vcf.add_info_to_header({"ID": "_".join(het), "Description": "The best " + str(i) + " Het count match for " + str(source), "Type": "Integer", "Number": "1"})
-        homalt = ["Best",str(source),str(i),"HomAlt"]
-        vcf.add_info_to_header({"ID": "_".join(homalt), "Description": "The best " + str(i) + " HomAlt count match " + str(source), "Type": "Integer", "Number": "1"})
-
-
-#def join_annotations(source):
-    ## create annotations specific to sources requested
-    ## makes "best" annotations corresponding to specified fields
-#    vcf.add_info_to_header({"ID": "Best_" + source, "Description": "The " + source + " ID of the best matching SV", "Type": "String", "Number": "1"})
-#    for i in source_cols[source]:
-#        annotation = bed_headers[i]
-#        annotation_type = header_types[annotation]
-#        vcf.add_info_to_header({"ID": "Best_" + source + "_" + annotation, "Description": "The best match " + annotation + " for " + source, "Type": annotation_type, "Number": "1"})
-
-
-def get_feature(source,my_list,col,datas):
-    ## takes a list of SV_ID_b and returns the feature for the specified col
-    ## returns list of requested feature
-    features = []
-    for i in my_list:
-        feature = datas[source][i][col]
-        if feature != "NA": 
-            features.append(feature)
-    return(features)
-
-
-#def add_best_annotations(source,my_list):
-    ## writes out best annotations to vcf
-#    if len(my_list) > 1:
-#        print(source + " has too many best")
-#    else:
-#        v.INFO["Best_" + source] = my_list[0]
-#        for i in source_cols[source]:
-#            annotation = bed_headers[i]
-#            annotation_type = header_types[annotation]
-#            v.INFO["Best_" + source + "_" + annotation] = datas[source][my_list[0]][i]
-
-
-def write_max_values(sv_id,my_dict,features,req_sources,datas,header_cols,header_types,v):
-    ## features is a list of annotations
-    ## finds max values for list of annotations
-    ## adds those max values to output VCF
-    for i in features:
-        anno = "Max_" + str(i)
-        max_val = float(0)
-        all_vals = []
-        for source in req_sources:
-            matches_vals = []
-            if sv_id in my_dict[source]:
-                matches_vals = get_feature(source,my_dict[source][sv_id],header_cols[i],datas)
-            all_vals.extend(matches_vals)
-        if len(all_vals) > 0:
-            if header_types[i] == "Float":
-                max_val = max(list(map(float,all_vals)))
-            if header_types[i] == "Integer":
-                max_val = max(list(map(int,all_vals)))
-        v.INFO[anno] = max_val
-
-
-def write_best_values(source,sv_id,my_dict,features,datas,header_cols,v):
-    ## features is a list of annotations
-    ## finds best values for list of annotations
-    ## adds those best values to output VCF
-    for i in features:
-        anno = "Best_" + str(source) + "_" + str(i)
-        best_val = []
-        if sv_id in my_dict[source]:
-            matches_vals = get_feature(source,my_dict[source][sv_id],header_cols[i],datas)
-            best_val.extend(matches_vals)
-        if len(best_val) == 0:
-            best_val = [0]
-        v.INFO[anno] = best_val[0]
-
-
 def create_full_string(source,my_list,datas):
     ## for a list of SV_ID_b
     ## generate comma-separated list of all annotations with |"s
@@ -471,8 +326,13 @@ def create_full_string(source,my_list,datas):
     return(",".join(big_list))
 
 
+###################################################################################################
+####                                           MAIN                                            ####
+###################################################################################################
+
 def annotate(parser,args):
 
+    from .annotation_utils import create_best_annotations, create_max_annotations, write_best_values, write_max_values  
     ########################################
     ##        Interpret Arguments         ##
     ########################################
@@ -744,10 +604,10 @@ def annotate(parser,args):
 
     ## pyRanges join
     ## identify intersections of SV coordinates
-    join_matches = {}
-    join_best_matches = {}
-    join_mismatches = {}
-    join_best_mismatches = {}
+    join_matches = defaultdict(lambda: defaultdict(list))
+    join_best_matches = defaultdict(lambda: defaultdict(list))
+    join_mismatches = defaultdict(lambda: defaultdict(list))
+    join_best_mismatches = defaultdict(lambda: defaultdict(list))
 
     for source in req_sources:
         print("\nRunning pyranges.join for:")
@@ -767,51 +627,31 @@ def annotate(parser,args):
         ##NOTE: Using mutliple CPUs for pyranges slows down the process 
 
         ## create SVTYPE matches dict
-        if source not in join_matches:
-            join_matches[source] = {}
         matches = convert_dict(pr_matches)
         filtered_matches = reciprocal_overlap(matches,source,minfs)
-        filtered_matches_ids = {}
+        filtered_matches_ids = defaultdict(list)
         for sv_id in filtered_matches:
-            if sv_id not in filtered_matches_ids:
-                filtered_matches_ids[sv_id] = []
             for i in filtered_matches[sv_id]["SV_ID_b"]:
                 filtered_matches_ids[sv_id].append(i)
-            if sv_id not in join_matches[source]:
-                join_matches[source][sv_id] = []
             join_matches[source][sv_id].extend(filtered_matches_ids[sv_id])
 
         ## create SVTYPE best match dict
-        if source not in join_best_matches:
-            join_best_matches[source] = {}
         best_matches_ids = get_best(filtered_matches,source,datas)
         for sv_id in best_matches_ids:
-            if sv_id not in join_best_matches[source]:
-                join_best_matches[source][sv_id] = []
             join_best_matches[source][sv_id].extend(best_matches_ids[sv_id])
 
         ## create SVTYPE mismatches dict
-        if source not in join_mismatches:
-            join_mismatches[source] = {}
         mismatches = convert_dict(pr_mismatches)
         filtered_mismatches = reciprocal_overlap(mismatches,source,minfs)
-        filtered_mismatches_ids = {}
+        filtered_mismatches_ids = defaultdict(list)
         for sv_id in filtered_mismatches:
-            if sv_id not in filtered_mismatches_ids:
-                filtered_mismatches_ids[sv_id] = []
             for i in filtered_mismatches[sv_id]["SV_ID_b"]:
                 filtered_mismatches_ids[sv_id].append(i)
-            if sv_id not in join_mismatches[source]:
-                join_mismatches[source][sv_id] = []
             join_mismatches[source][sv_id].extend(filtered_mismatches_ids[sv_id])
 
         ## create SVTYPE best mismatch dict
-        if source not in join_best_mismatches:
-            join_best_mismatches[source] = {}
         best_mismatches_ids = get_best(filtered_mismatches,source,datas)
         for sv_id in best_mismatches_ids:
-            if sv_id not in join_best_mismatches[source]:
-                join_best_mismatches[source][sv_id] = []
             join_best_mismatches[source][sv_id].extend(best_mismatches_ids[sv_id])
 
     ########################################
@@ -864,12 +704,10 @@ def annotate(parser,args):
             if "mf" in extras or "all" in extras:
                 write_max_values(sv_id,join_matches,["SAS_Male_AF","SAS_Male_Het","SAS_Male_HomAlt","SAS_Female_AF","SAS_Female_Het","SAS_Female_HomAlt"],req_sources,datas,header_cols,header_types,v)
         
-        counts = {}
+        counts = defaultdict(lambda: 0)
         for source in req_sources:
         
             ## write data source matches count
-            if source not in counts:
-                counts[source] = 0
             if sv_id in join_matches[source]:
                 counts[source] = len(join_matches[source][sv_id])
             v.INFO[source + "_Count"] = counts[source]
