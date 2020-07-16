@@ -14,7 +14,11 @@ Annotate Structural Variants with Population Allele Frequency Info
 1) Set up new conda environment 
 
 ```
-conda create --name svafotate python=3
+conda create --name svafotate-env python=3
+```
+
+```
+conda activate svafotate-env
 ```
 
 
