@@ -4,8 +4,9 @@ import pickle
 import argparse 
 import gzip
 import io
+import copy
 from collections import defaultdict
-from .svafotate_main import process_bed_source
+from .utils import process_bed_source
 
 def add_pickle_source(parser):
     
@@ -35,11 +36,17 @@ def add_pickle_source(parser):
 
 def pickle_source(parser,args):
 
+    ## Get data objects from bed file
+    s, d, bl, bh = process_bed_source(args.bed)
 
-    sources, datas, bed_lists, bed_headers = process_bed_source(args.bed)
+    ## Cast them to non local function objects
+    sources = list(s)
+    datas = dict(d)
+    bed_lists = dict(bl)
+    bed_headers = list(bh)
 
+    ## Pickle annotation objects
     print("\nPickling data")
-
     out_fh = open(args.out if args.out.endswith(".pickle") else args.out + ".pickle", "wb")
     pickle.dump({"sources":sources, "datas":datas, "bed_lists":bed_lists, "bed_headers":bed_headers}, out_fh)
     out_fh.close()
