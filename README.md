@@ -14,38 +14,38 @@ Annotate Structural Variants with Population Allele Frequency Info
 1) Set up new conda environment 
 
 ```
-conda create --name svafotate-env python=3
+$ conda create --name svafotate-env python=3
 ```
 
 ```
-conda activate svafotate-env
+$ conda activate svafotate-env
 ```
 
 
 2) Install package requirements 
 
 ```
-conda install --file https://raw.githubusercontent.com/mikecormier/SVAFotate/master/requirements.txt?token=AIM3FBTOHCDMZJYYLOX3OYC7B7FGW
+$ conda install --file https://raw.githubusercontent.com/mikecormier/SVAFotate/master/requirements.txt?token=AIM3FBTOHCDMZJYYLOX3OYC7B7FGW
 ```
 
 
 3) Install SVAFotate
 
 ```
-pip install -U git@github.com:mikecormier/SVAFotate.git
+$ pip install -U git@github.com:mikecormier/SVAFotate.git
 ```
 
 
 4) Check that SVAFotate installed Correctly 
 
 ```
-svafotate --version
+$ svafotate --version
 
 svafotate 0.0.1
 ```
 
 ```
-svafotate -h 
+$ svafotate -h 
 
 usage: svafotate [-h] [-v] {annotate,pickle-source,custom-annotation} ...
 
