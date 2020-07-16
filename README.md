@@ -25,7 +25,7 @@ conda activate svafotate-env
 2) Install package requirements 
 
 ```
-conda install --file https://github.com/mikecormier/SVAFotate/blob/master/requirements.txt
+conda install --file https://raw.githubusercontent.com/mikecormier/SVAFotate/master/requirements.txt?token=AIM3FBTOHCDMZJYYLOX3OYC7B7FGW
 ```
 
 
