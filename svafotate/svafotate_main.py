@@ -431,7 +431,7 @@ def annotate(parser,args):
         start = int(v.start) 
         start += int(cipos[0]) if args.ci == "out" else int(cipos[1]) if args.ci == "in" else 0
         end = int(v.INFO.get("END")) if svtype != "BND" else int(v.POS)
-        end += int(ciend[1]) if args.ci == "out" else int(ciend[0]) if args.ci == "out" else 0
+        end += int(ciend[1]) if args.ci == "out" else int(ciend[0]) if args.ci == "in" else 0
         if args.ci == "in" and end < start:
             end = start + 1
 
