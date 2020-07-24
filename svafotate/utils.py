@@ -3,7 +3,7 @@ import sys
 
 
 
-def process_bed_source(bed_file):
+def process_bed_source(bed_file,covAF,uniqAF):
     ## process bed file containing SV AFs
     ## save info into datas in source specific manner
     ## create source specific lists for use in pyranges
@@ -16,6 +16,8 @@ def process_bed_source(bed_file):
     datas = defaultdict(lambda: defaultdict(list))
     bed_lists = defaultdict(lambda: defaultdict(list))
     bed_headers = []
+    cov_lists = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    uniq_lists = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
 
     bed = gzip.open(bed_file, "rt", encoding="utf-8") if bed_file.endswith(".gz") else io.open(bed_file, "rt", encoding="utf-8")
     print("\nReading the following data source file: {}".format(bed_file))
@@ -41,24 +43,36 @@ def process_bed_source(bed_file):
         line_dict = dict(zip(header, line.strip().split("\t")))
         source = line_dict["SOURCE"]
         sv_id = line_dict["SV_ID"]
+        svtype = line_dict["SVTYPE"]
 
         ## Collect info
         datas[source][sv_id].append(line_dict["SVTYPE"])
         datas[source][sv_id].extend([line_dict[field] for field in header[6:len(header)]])
     
+        ## define AF for each line
+        ## MCNV from gnomAD currently lists lowAF:highAF
+        ## correct these AFs to just the highAF
+        af = line_dict[header[6]]
+        if ':' in af:
+            af = af.split(':')[1]
+
         ## add freature info for
         for i,key in enumerate(features):
             bed_lists[source][features[i]].append(line_dict[key.upper()])
+            if float(af) > covAF:
+                cov_lists[source][svtype][features[i]].append(line_dict[key.upper()])
+            if float(af) > uniqAF:
+                uniq_lists[source][svtype][features[i]].append(line_dict[key.upper()])
 
         ## add sources sources 
         sources.add(source)
 
     bed.close()
 
-    return(sources,datas,bed_lists, bed_headers)
+    return(sources,datas,bed_lists,bed_headers,cov_lists,uniq_lists)
 
 
-def process_pickled_source(pickled_source):
+def process_pickled_source(pickled_source,coAF,uniqAF):
 
     import pickle
 
@@ -67,7 +81,7 @@ def process_pickled_source(pickled_source):
     pickled_data = pickle.load(pickle_file)
     pickle_file.close()
     
-    return(pickled_data["sources"], pickled_data["datas"], pickled_data["bed_lists"], pickled_data["bed_headers"])
+    return(pickled_data["sources"], pickled_data["datas"], pickled_data["bed_lists"], pickled_data["bed_headers"], pickled_data["cov_lists"], pickled_data["uniq_lists"])
 
 
 def get_feature(source,my_list,col,datas):

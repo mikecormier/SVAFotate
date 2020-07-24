@@ -1,6 +1,7 @@
 import sys
 import pyranges as pr
 from cyvcf2 import VCF, Writer
+import numpy as np
 import time
 import gzip
 import pandas as pd
@@ -79,6 +80,30 @@ def add_annotation(parser):
                    help=("By default, only the maxAF, max Hets and Homalt counts, and max PopAF are annotated in the output VCF file."
                          " `-a` can be used to add additional anntations, with each anntotation seperated by a space."
                          " (Example ' -a mf best pops ' ). Choices = [{}]").format(", ".join(extra_annotation_choices))
+    )
+
+    opt.add_argument('-c', '--cov',
+                    metavar='OBSERVED SV COVERAGE',
+                    type=float,
+                    help=("Add an annotation reflecting how much of the SV genomic space has been previously observed with the same SVTYPE."
+                          "Uses the data sources listed with -s as the previously observed SVs."
+                          "Please provide minimum AF to exclude all SVs from data sources with a total AF below that value (must be between 0 and 1.0)")
+    )
+    
+    opt.add_argument('-u', '--uniq',
+                    metavar='UNIQUE SV REGIONS',
+                    type=float,
+                    help=("Generate a file of unique SV regions called 'unique.bed'"
+                          "These regions reflect genomic space within the SV region that have not been previous observed with the same SVTYPE."
+                          "This will also add an annotation regarding the number of unique regions within a given SV."
+                          "Please provide minimum AF to exclude all SVs from data sources with a total AF below that value (must be between 0 and 1.0)")
+    )
+
+    opt.add_argument('-t', '--target',
+                    metavar='TARGETS BED FILE',
+                     help=("Path to target regions BED file"
+                           "Expected format is a tab delimited file listing CHROM START END ID"
+                           "Where ID is a genomic region identifier that will be listed as an annotation if an overlap exists between a given SV and the target regions")
     )
 
     opt.add_argument("-ci", "--ci",
@@ -370,12 +395,20 @@ def annotate(parser,args):
     datas = {}
     bed_lists = {}
     bed_headers = []
+    cov_lists = {}
+    covAF = float(0)
+    if args.cov:
+        covAF = args.cov
+    uniq_lists = {}
+    uniqAF = float(0)
+    if args.uniq:
+        uniqAF = args.uniq
 
     ## Get info from bed file
     if args.bed:
-        sources, datas, bed_lists, bed_headers = process_bed_source(args.bed)
+        sources, datas, bed_lists, bed_headers, cov_lists, uniq_lists = process_bed_source(args.bed,covAF,uniqAF)
     elif args.pickled_source:
-        sources, datas, bed_lists, bed_headers = process_pickled_source(args.pickled_source)
+        sources, datas, bed_lists, bed_headers, cov_lists, uniq_lists = process_pickled_source(args.pickled_source,covAF,uniqAF)
     else:
         raise NameError("Data Source is missing")
 
@@ -407,6 +440,55 @@ def annotate(parser,args):
             print(req_sources[i] + "\t" + minf[i])
 
     extras = args.ann if args.ann is not None else []
+    if args.ann:
+        extras_des = {
+            'all': 'All additional frequencies and counts and best matches',
+            'mf': 'Male/Female frequencies and counts',
+            'best': 'Best match ID, frequencies and counts',
+            'pops': 'All populations frequencies and counts',
+            'AFR': 'AFR population frequencies and counts',
+            'AMR': 'AMR population frequencies and counts',
+            'EAS': 'EAS population frequencies and counts',
+            'EUR': 'EUR population frequencies and counts',
+            'OTH': 'OTH population frequencies and counts',
+            'SAS': 'SAS population frequencies and counts',
+            'full': 'Full annotations for all SV matches',
+            'mis': 'Mismatch SV counts and Best mismatch SV ID, frequencies and counts'}
+        print("\nAdditional annotations requested:")
+        for a in extras:
+            print(extras_des[a])        
+
+    ## recognize that coverage annotation is requested
+    ## with an AF cutoff
+    if args.cov:
+        minc = args.cov
+        print("\nSV_Cov annotation requested; AF cutoff of: " + str(minc))
+
+    ## recognize that unique annotation is requested
+    ## with an AF cutoff
+    if args.uniq:
+        minu = args.uniq
+        print("\nProducing uniques.bed output and SV_Uniq annotation requested; AF cutoff of: " + str(minu))
+
+    ## get target file and prepare targets for pyranges
+    tar_lists = defaultdict(list)
+    if args.target:
+        print("\nReading the following targets BED file:\n" + str(args.target))
+        tar_file = args.target
+        if tar_file.endswith('.gz'):
+            tar_file = gzip.open(args.target, 'rt', encoding='utf-8')
+        else:
+            tar_file = open(args.target, 'r')
+        for line in tar_file:
+            fields = line.rstrip().split('\t')
+            if line.startswith('#'):
+                continue
+            chrom,start,end,target = fields[0:4]
+            chrom = chrom[3:] if chrom.startswith("chr") else chrom
+            features = ['chrom','start','end','target']
+            variables = [chrom,start,end,target]
+            for i in range(len(variables)):
+                tar_lists[features[i]].append(variables[i])
 
     ########################################
     ##          Process Input VCF         ##
@@ -416,6 +498,11 @@ def annotate(parser,args):
     ## set up dicts for storing results
     print("\nGathering SV coordinates from VCF file: {}".format(args.vcf))
     lists = defaultdict(list)
+    svtype_lists = defaultdict(lambda: defaultdict(list))
+    samples = np.array(vcf.samples)
+    het_samples = {}
+    homalt_samples = {}
+    svtypes = {}
     for v in vcf:
 
         ## VCF Info
@@ -450,6 +537,25 @@ def annotate(parser,args):
         variables = [chrom,start,end,svtype,sv_id]
         for i in range(len(features)):
             lists[features[i]].append(variables[i])
+            svtype_lists[svtype][features[i]].append(variables[i])
+
+        ## Get record of which samples are het and homalt
+        ## Add these via SV_ID
+        gt_types = v.gt_types
+        if sv_id not in het_samples:
+            het_samples[sv_id] = 'None'
+        hets = samples[gt_types == 1]
+        if len(hets) > 0:
+            het_samples[sv_id] = ','.join(sorted(hets))
+        if sv_id not in homalt_samples:
+            homalt_samples[sv_id] = 'None'
+        hom_alts = samples[gt_types == 2]
+        if len(hom_alts) > 0:
+            homalt_samples[sv_id] = ','.join(sorted(hom_alts))
+
+        ## Save SVTYPE per SV_ID
+        if sv_id not in svtypes:
+            svtypes[sv_id] = svtype
 
     ## Close input VCF
     ## Reopen input for writing to output
@@ -470,10 +576,10 @@ def annotate(parser,args):
     source_cols["1000G_Smoove"] = list(list(range(0,70,1)) + list(range(84,100,1)))
 
     ## main, default max annotations to add
-    vcf.add_info_to_header({"ID": "Max_AF", "Description": "The maximum AF from all matching SVs across all specified data sources (" + ",".join(req_sources) + ")", "Type": "Float", "Number": "1"})
-    vcf.add_info_to_header({"ID": "Max_Het", "Description": "The maximum Het count from all matching SVs across all specified data sources (" + ",".join(req_sources) + ")", "Type": "Integer", "Number": "1"})
-    vcf.add_info_to_header({"ID": "Max_HomAlt", "Description": "The maximum HomAlt count from all matching SVs across all specified data sources (" + ",".join(req_sources) + ")", "Type": "Integer", "Number": "1"})
-    vcf.add_info_to_header({"ID": "Max_PopMax_AF", "Description": "The maximum PopMax_AF from all matching SVs across all specified data sources (" + ",".join(req_sources) + ")", "Type": "Float", "Number": "1"})
+    vcf.add_info_to_header({"ID": "Max_AF", "Description": "The maximum AF from all matching SVs across all specified data sources (" + ", ".join(req_sources) + ")", "Type": "Float", "Number": "1"})
+    vcf.add_info_to_header({"ID": "Max_Het", "Description": "The maximum Het count from all matching SVs across all specified data sources (" + ", ".join(req_sources) + ")", "Type": "Integer", "Number": "1"})
+    vcf.add_info_to_header({"ID": "Max_HomAlt", "Description": "The maximum HomAlt count from all matching SVs across all specified data sources (" + ", ".join(req_sources) + ")", "Type": "Integer", "Number": "1"})
+    vcf.add_info_to_header({"ID": "Max_PopMax_AF", "Description": "The maximum PopMax_AF from all matching SVs across all specified data sources (" + ", ".join(req_sources) + ")", "Type": "Float", "Number": "1"})
 
     ## add male and female annotations
     if "mf" in extras or "all" in extras:
@@ -581,6 +687,21 @@ def annotate(parser,args):
         if "full" in extras or "all" in extras:
             vcf.add_info_to_header({"ID": source + "_Matches", "Description": "Comma-separated list of  each SV match with " + source + ", where all annotations are listed as SV_ID|AF|HomRef|Het|HomAlt|Male_AF|Male_HomRef|Male_Het|Male_HomAlt|HemiAlt|Hemi_AF|Female_AF|Female_HomRef|Female_Het|Female_HomAlt|AFR_AF|AFR_HomRef|AFR_Het|AFR_HomAlt|AFR_Male_AF|AFR_Male_HomRef|AFR_Male_Het|AFR_Male_HomAlt|AFR_HemiAlt|AFR_Hemi_AF|AFR_Female_AF|AFR_Female_HomRef|AFR_Female_Het|AFR_Female_HomAlt|AMR_AF|AMR_HomRef|AMR_Het|AMR_HomAlt|AMR_Male_AF|AMR_Male_HomRef|AMR_Male_Het|AMR_Male_HomAlt|AMR_HemiAlt|AMR_Hemi_AF|AMR_Female_AF|AMR_Female_HomRef|AMR_Female_Het|AMR_Female_HomAlt|EAS_AF|EAS_HomRef|EAS_Het|EAS_HomAlt|EAS_Male_AF|EAS_Male_HomRef|EAS_Male_Het|EAS_Male_HomAlt|EAS_HemiAlt|EAS_Hemi_AF|EAS_Female_AF|EAS_Female_HomRef|EAS_Female_Het|EAS_Female_HomAlt|EUR_AF|EUR_HomRef|EUR_Het|EUR_HomAlt|EUR_Male_AF|EUR_Male_HomRef|EUR_Male_Het|EUR_Male_HomAlt|EUR_HemiAlt|EUR_Hemi_AF|EUR_Female_AF|EUR_Female_HomRef|EUR_Female_Het|EUR_Female_HomAlt|OTH_AF|OTH_HomRef|OTH_Het|OTH_HomAlt|OTH_Male_AF|OTH_Male_HomRef|OTH_Male_Het|OTH_Male_HomAlt|OTH_HemiAlt|OTH_Hemi_AF|OTH_Female_AF|OTH_Female_HomRef|OTH_Female_Het|OTH_Female_HomAlt|SAS_AF|SAS_HomRef|SAS_Het|SAS_HomAlt|SAS_Male_AF|SAS_Male_HomRef|SAS_Male_Het|SAS_Male_HomAlt|SAS_HemiAlt|SAS_Hemi_AF|SAS_Female_AF|SAS_Female_HomRef|SAS_Female_Het|SAS_Female_HomAlt|PopMax_AF|In_Pop as found in " + args.bed if args.bed else args.pickled_source, "Type": "String", "Number": "."})
 
+        ## add SV_Cov if -c is used
+        if args.cov is not None:
+            vcf.add_info_to_header({'ID': 'SV_Cov', 'Description': 'The amount of the SV covered by matching SVs from ' + ', '.join(req_sources) + ' that have an AF greater than ' + str(minc), 'Type': 'Float', 'Number': '1'})
+
+        ## add SV_Uniq if -u is used
+        if args.uniq is not None:
+            vcf.add_info_to_header({'ID': 'SV_Uniq', 'Description': 'The number of unique regions within the SV that are not found in ' + ', '.join(req_sources) + ' that have an AF greater than ' + str(minu), 'Type': 'Integer', 'Number': '1'})
+
+        ## add Targets_Overlaps if -t is used
+        if args.target is not None:
+            vcf.add_info_to_header({'ID': 'Target_Overlaps', 'Description': 'The target overlaps found for the SV corresponding to targets listed in ' + str(args.target), 'Type': 'String', 'Number': '.'})
+
+        ## add Unique_Targets if -u and -t is used:
+        if args.target is not None and args.uniq is not None:
+            vcf.add_info_to_header({'ID': 'Unique_Targets', 'Description': 'The target overlaps found for the unique region within the SV corresponding to targets listed in ' + str(args.target), 'Type': 'String', 'Number': '.'})
 
     #if "CCDG" in req_sources:
     #    join_annotations("CCDG")
@@ -653,6 +774,150 @@ def annotate(parser,args):
         best_mismatches_ids = get_best(filtered_mismatches,source,datas)
         for sv_id in best_mismatches_ids:
             join_best_mismatches[source][sv_id].extend(best_mismatches_ids[sv_id])
+
+    ## identify SV overlaps with targets
+    ## if -t invoked
+    if args.target:
+        print("\nRunning pyranges.join for:")
+        print(args.target)
+        pr_tar = pr.from_dict({"Chromosome": tar_lists['chrom'], \
+                               "Start": tar_lists['start'], \
+                               "End": tar_lists['end'], \
+                               "Targets": tar_lists['target']})
+        tar_joined = pr_vcf.join(pr_tar).sort()
+        tardf = tar_joined.as_df()
+        if tardf.empty != True:
+            tardict = tardf.groupby("SV_ID").agg({"Targets": list }).transpose().to_dict()
+        else:
+            tardict = {}
+
+    ## pyRanges coverage and pyranges subtract
+    ## identify coverage of SV overlaps
+    ## identify unique regions within SV
+    covs = {}
+    uniqs = {}
+    if args.cov is not None or args.uniq is not None:
+        print("\nCreating pyranges objects per SVTYPE from VCF data...")
+        for svtype in sorted(svtype_lists):
+            pr_vcf = pr.from_dict({"Chromosome": svtype_lists[svtype]['chrom'], \
+                                   "Start": svtype_lists[svtype]['start'], \
+                                   "End": svtype_lists[svtype]['end'], \
+                                   "SVTYPE": svtype_lists[svtype]['svtype'], \
+                                   "SV_ID": svtype_lists[svtype]['sv_id']})
+
+            if args.cov:
+                print("\nRunning pyranges.coverage for:")
+                print(str(svtype))
+                ## combine data from all data sources into a single pyrange object
+                fin_cov_lists = {}
+                for source in req_sources:
+                    for key in cov_lists[source][svtype]:
+                        if key not in fin_cov_lists:
+                            fin_cov_lists[key] = []
+                        fin_cov_lists[key].extend(cov_lists[source][svtype][key])
+
+                pr_bed = pr.from_dict({"Chromosome": fin_cov_lists['chrom'], \
+                                       "Start": fin_cov_lists['start'], \
+                                       "End": fin_cov_lists['end'], \
+                                       "SVTYPE": fin_cov_lists['svtype'], \
+                                       "SV_ID": fin_cov_lists['sv_id']})
+
+                coveraged = pr_vcf.coverage(pr_bed, overlap_col="Overlaps", fraction_col="Coverage").sort()
+                covdf = coveraged.as_df()
+                covdict = dict(zip(covdf.SV_ID, covdf.Coverage))
+                covs.update(covdict)
+
+            if args.uniq is not None:
+                print("\nRunning pyranges.subtract for:")
+                print(str(svtype))
+                ## combine data from all data sources into a single pyrange object
+                fin_uniq_lists = {}
+                for source in req_sources:
+                    for key in uniq_lists[source][svtype]:
+                        if key not in fin_uniq_lists:
+                            fin_uniq_lists[key] = []
+                        fin_uniq_lists[key].extend(uniq_lists[source][svtype][key])
+
+                    pr_bed = pr.from_dict({"Chromosome": fin_uniq_lists['chrom'], \
+                                           "Start": fin_uniq_lists['start'], \
+                                           "End": fin_uniq_lists['end'], \
+                                           "SVTYPE": fin_uniq_lists['svtype'], \
+                                           "SV_ID": fin_uniq_lists['sv_id']})
+
+                subtracted = pr_vcf.subtract(pr_bed).sort()
+                subdf = subtracted.as_df()
+                for i,row in subdf.iterrows():
+                    sv_id = row.SV_ID
+                    coord = "{}:{}-{}".format(row.Chromosome, row.Start, row.End)
+                    if sv_id not in uniqs:
+                        uniqs[sv_id] = []
+                        uniqs[sv_id].append(coord)
+
+    ## Create and output to uniques.bed
+    ## if -u option invoked
+    if args.uniq:
+        print("\nPrinting unique regions to uniques.bed")
+        uniqs_file = open('uniques.bed', 'w')
+
+        ## add header to uniques.bed
+        ## include 'Targets' if -t is used
+        if args.target is not None:
+            uniqs_file.write('\t'.join(['#CHROM','START','END','SVTYPE','SV_ID','Het_Samples','HomAlt_Samples','Targets']))
+            uniqs_file.write("\n")
+        else:
+            uniqs_file.write('\t'.join(['#CHROM','START','END','SVTYPE','SV_ID','Het_Samples','HomAlt_Samples']))
+            uniqs_file.write("\n")
+
+        nuniqs = {}
+        output = {}
+        new_uniq_lists = defaultdict(list)
+        features = ['chrom','start','end','sv_id']
+        uniq_targets = {}
+        for sv_id in uniqs:
+            if sv_id not in output:
+                output[sv_id] = []
+                if sv_id not in nuniqs:
+                    nuniqs[sv_id] = len(uniqs[sv_id])
+            if len(uniqs[sv_id]) > 0:
+                for i in uniqs[sv_id]:
+                    j = i.split(':')
+                    chrom = j[0]
+                    coords = j[1].split('-')
+                    start = coords[0]
+                    end = coords[1]
+                    out = [str(chrom),str(start),str(end),str(svtypes[sv_id]),str(sv_id),het_samples[sv_id],homalt_samples[sv_id]]
+                    output[sv_id].extend(out)
+                    variables = [chrom,start,end,sv_id]
+                    for i in range(len(variables)):
+                        new_uniq_lists[features[i]].append(variables[i])
+                        
+        ## Adding targets to uniques.bed if -t requested
+        if args.target:        
+            pr_uniq = pr.from_dict({"Chromosome": new_uniq_lists['chrom'], \
+                                    "Start": new_uniq_lists['start'], \
+                                    "End": new_uniq_lists['end'], \
+                                    "SV_ID": new_uniq_lists['sv_id']})
+
+            uniq_join = pr_uniq.join(pr_tar).sort()
+            uniqdf = uniq_join.as_df()
+            if uniqdf.empty != True:
+                uniqdict = uniqdf.groupby("SV_ID").agg({"Targets": list }).transpose().to_dict()
+                for sv_id in uniqs:
+                    if sv_id in uniqdict:
+                        output[sv_id].extend([','.join(uniqdict[sv_id]['Targets'])])
+                        if sv_id not in uniq_targets:
+                            uniq_targets[sv_id] = [','.join(uniqdict[sv_id]['Targets'])]
+                    else:
+                        output[sv_id].extend(['None'])
+            else:
+                for sv_id in uniqs:
+                    output[sv_id].extend(['None'])
+
+        ## write to uniques file the unique regions
+        for sv_id in uniqs:
+            uniqs_file.write('\t'.join(output[sv_id]))
+            uniqs_file.write("\n")
+        uniqs_file.close()
 
     ########################################
     ## Write To Output/Adding Annotations ##
@@ -783,8 +1048,33 @@ def annotate(parser,args):
             ## write full matches annotations
             if "full" in extras or "all" in extras:
                 if sv_id in join_matches[source]:
-                    v.INFO[source + "_Matches"] = create_full_string(source,join_matches[source][sv_id],datas)            
-                    
+                    v.INFO[source + "_Matches"] = create_full_string(source,join_matches[source][sv_id],datas)
+
+            ## write SV_Cov annotation
+            if args.cov:
+                svcov = float(0)
+                if sv_id in covs:
+                    svcov = float(covs[sv_id])
+                v.INFO['SV_Cov'] = svcov
+
+            ## write SV_Uniq count annotation
+            if args.uniq:
+                num_u = int(0)
+                if sv_id in nuniqs:
+                    num_u = int(nuniqs[sv_id])
+                v.INFO['SV_Uniq'] = num_u
+
+            ## write Targets_Overlaps annotation
+            if args.target:
+                if sv_id in tardict:
+                    tars = ','.join(sorted(tardict[sv_id]['Targets']))
+                    v.INFO['Target_Overlaps'] = tars
+
+            ## write Unique_Targets annotation
+            if args.target is not None and args.uniq is not None:
+                if sv_id in uniq_targets:
+                    v.INFO['Unique_Targets'] = ','.join(sorted(uniq_targets[sv_id]))
+
         new_vcf.write_record(v)
 
     new_vcf.close(); vcf.close()
