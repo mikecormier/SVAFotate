@@ -3,7 +3,7 @@ import sys
 
 
 
-def process_bed_source(bed_file,covAF,uniqAF):
+def process_bed_source(bed_file,covAF,uniqAF,size_limit):
     ## process bed file containing SV AFs
     ## save info into datas in source specific manner
     ## create source specific lists for use in pyranges
@@ -44,6 +44,9 @@ def process_bed_source(bed_file,covAF,uniqAF):
         source = line_dict["SOURCE"]
         sv_id = line_dict["SV_ID"]
         svtype = line_dict["SVTYPE"]
+        start = line_dict["START"]
+        end = line_dict["END"]
+        size = int(end) - int(start)
 
         ## Collect info
         datas[source][sv_id].append(line_dict["SVTYPE"])
@@ -59,9 +62,9 @@ def process_bed_source(bed_file,covAF,uniqAF):
         ## add freature info for
         for i,key in enumerate(features):
             bed_lists[source][features[i]].append(line_dict[key.upper()])
-            if float(af) > covAF:
+            if float(af) > covAF and size <= size_limit:
                 cov_lists[source][svtype][features[i]].append(line_dict[key.upper()])
-            if float(af) > uniqAF:
+            if float(af) > uniqAF and size <= size_limit:
                 uniq_lists[source][svtype][features[i]].append(line_dict[key.upper()])
 
         ## add sources sources 
@@ -72,7 +75,7 @@ def process_bed_source(bed_file,covAF,uniqAF):
     return(sources,datas,bed_lists,bed_headers,cov_lists,uniq_lists)
 
 
-def process_pickled_source(pickled_source,coAF,uniqAF):
+def process_pickled_source(pickled_source,coAF,uniqAF,size_limit):
 
     import pickle
 

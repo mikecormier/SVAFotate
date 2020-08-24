@@ -99,6 +99,12 @@ def add_annotation(parser):
                           "Please provide minimum AF to exclude all SVs from data sources with a total AF below that value (must be between 0 and 1.0)")
     )
 
+    opt.add_argument("-l", "--lim",
+                   metavar="SV SIZE LIMIT",
+                   type=int,
+                   help="Only include SVs with a size less than or equal to this value (only available when using --cov or --uniq)"
+    )
+
     opt.add_argument('-t', '--target',
                     metavar='TARGETS BED FILE',
                      help=("Path to target regions BED file"
@@ -109,7 +115,25 @@ def add_annotation(parser):
     opt.add_argument("-ci", "--ci",
                    metavar="USE CI BOUNDARIES",
                    choices=["in","out"],
+                   help="If argument selected, use 'inner' or 'outer' confidence intervals (CIPOS, CIEND) for SV boundaries. Choices = [in, out]"
+    )
+
+    opt.add_argument("-ci95", "--ci95",
+                   metavar="USE CI BOUNDARIES",
+                   choices=["in","out"],
                    help="If argument selected, use 'inner' or 'outer' confidence intervals (CIPOS95, CIEND95) for SV boundaries. Choices = [in, out]"
+    )
+
+    opt.add_argument("-e", "--emb",
+                   metavar="EMBIGGEN THE SV SIZE",
+                   type=int,
+                   help="Increase the size of the SV coordinates in the VCF (--vcf) by a single integer; Subtract that value from the start and add it to the end of each set of coordinates."
+    )
+
+    opt.add_argument("-r", "--red",
+                   metavar="REDUCE THE SV SIZE",
+                   type=int,
+                   help="Reduce the size of the SV coordinates in the VCF (--vcf) by a single integer; Add that value to the start and subtract it from the end of each set of coordinates."
     )
 
     opt.add_argument("--cpu",
@@ -390,6 +414,10 @@ def annotate(parser,args):
         minf = [float(0.001)]
         print("\nNo reciprocal overlap fraction indicated; using default 0.001")
 
+    ## check that --lim is only used when --cov or --uniq is also used
+    if args.lim is not None and args.cov is None and args.uniq is None:
+        raise NameError("\nThe argument --lim must be used alongside --cov or --uniq; please include either --cov or --uniq")
+
     ## local vars
     sources = []
     datas = {}
@@ -403,12 +431,15 @@ def annotate(parser,args):
     uniqAF = float(0)
     if args.uniq:
         uniqAF = args.uniq
+    size_limit = 250000000
+    if args.lim is not None:
+        size_limit = args.lim
 
     ## Get info from bed file
     if args.bed:
-        sources, datas, bed_lists, bed_headers, cov_lists, uniq_lists = process_bed_source(args.bed,covAF,uniqAF)
+        sources, datas, bed_lists, bed_headers, cov_lists, uniq_lists = process_bed_source(args.bed,covAF,uniqAF,size_limit)
     elif args.pickled_source:
-        sources, datas, bed_lists, bed_headers, cov_lists, uniq_lists = process_pickled_source(args.pickled_source,covAF,uniqAF)
+        sources, datas, bed_lists, bed_headers, cov_lists, uniq_lists = process_pickled_source(args.pickled_source,covAF,uniqAF,size_limit)
     else:
         raise NameError("Data Source is missing")
 
@@ -490,6 +521,14 @@ def annotate(parser,args):
             for i in range(len(variables)):
                 tar_lists[features[i]].append(variables[i])
 
+    ## Check that only one CI parameter is called at a time
+    if args.ci is not None and args.ci95 is not None:
+        raise argparse.ArgumentTypeError("Only one confidence interval parameter can be used at a time; please use only --ci or --ci95, not both")
+
+    ## Check that only one of --emb or --red is called, not both
+    if args.emb is not None and args.red is not None:
+        raise argparse.ArgumentTypeError("Only one of --emb or --red can be used at a time; please use only --emb or --red, not both")
+
     ########################################
     ##          Process Input VCF         ##
     ########################################
@@ -506,20 +545,31 @@ def annotate(parser,args):
     for v in vcf:
 
         ## VCF Info
-        cipos = v.INFO.get("CIPOS95") if args.ci is not None else 0
-        ciend = v.INFO.get("CIEND95") if args.ci is not None else 0 
+        cipos = v.INFO.get("CIPOS") if args.ci is not None else 0
+        ciend = v.INFO.get("CIEND") if args.ci is not None else 0 
+        cipos95 = v.INFO.get("CIPOS95") if args.ci95 is not None else 0
+        ciend95 = v.INFO.get("CIEND95") if args.ci95 is not None else 0 
         svtype = v.INFO.get("SVTYPE") if v.INFO.get("SVTYPE") is not None else None
         sv_id = v.ID
 
         ## Get variant info
         ## Check for BNDs 
         ## Check for confidence intervals for adjustments
+        ## Also adjust coordinates if --emb or --red is called
         chrom = v.CHROM[3:] if v.CHROM.startswith("chr") else v.CHROM
         start = int(v.start) 
         start += int(cipos[0]) if args.ci == "out" else int(cipos[1]) if args.ci == "in" else 0
+        start += int(cipos95[0]) if args.ci95 == "out" else int(cipos95[1]) if args.ci95 == "in" else 0
+        start -= int(args.emb) if args.emb is not None else 0
+        start += int(args.red) if args.red is not None else 0
         end = int(v.INFO.get("END")) if svtype != "BND" else int(v.POS)
         end += int(ciend[1]) if args.ci == "out" else int(ciend[0]) if args.ci == "in" else 0
-        if args.ci == "in" and end < start:
+        end += int(ciend95[1]) if args.ci95 == "out" else int(ciend95[0]) if args.ci95 == "in" else 0
+        end += int(args.emb) if args.emb is not None else 0
+        end -= int(args.red) if args.red is not None else 0
+        if (args.ci == "in" or args.ci95 == "in") and end < start:
+            end = start + 1
+        if args.red is not None and end < start:
             end = start + 1
 
         ## Check for problematic coordinates
