@@ -24,15 +24,15 @@ def process_bed_source(bed_file,covAF,uniqAF,size_limit):
 
     header = []
     header_found = False
-    features = ["chrom","start","end","svtype","sv_id"]
+    features = ["chrom","start","end","svlen","svtype","sv_id"]
     for line in bed:
 
         ## get header
         if line.startswith("#"):
             header = line.strip().replace("#","").split("\t")
             header_found = True
-            bed_headers.append(header[3])
-            bed_headers.extend(header[6:len(header)])
+            bed_headers.append(header[4])
+            bed_headers.extend(header[7:len(header)])
             continue
 
         ## Check for header
@@ -43,6 +43,7 @@ def process_bed_source(bed_file,covAF,uniqAF,size_limit):
         line_dict = dict(zip(header, line.strip().split("\t")))
         source = line_dict["SOURCE"]
         sv_id = line_dict["SV_ID"]
+        svlen = line_dict["SVLEN"]
         svtype = line_dict["SVTYPE"]
         start = line_dict["START"]
         end = line_dict["END"]
@@ -50,12 +51,12 @@ def process_bed_source(bed_file,covAF,uniqAF,size_limit):
 
         ## Collect info
         datas[source][sv_id].append(line_dict["SVTYPE"])
-        datas[source][sv_id].extend([line_dict[field] for field in header[6:len(header)]])
+        datas[source][sv_id].extend([line_dict[field] for field in header[7:len(header)]])
     
         ## define AF for each line
         ## MCNV from gnomAD currently lists lowAF:highAF
         ## correct these AFs to just the highAF
-        af = line_dict[header[6]]
+        af = line_dict["AF"]
         if ':' in af:
             af = af.split(':')[1]
 

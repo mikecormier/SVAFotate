@@ -249,6 +249,13 @@ def get_fraction2(groupby_list):
     return(fraction_list)
 
 
+def INS_conv(row):
+    ## change INS coordinates in df
+    ## only if SVLEN > than current coordinates
+    row.End = int(row.Start) + int(row.SVLEN) if ((int(row.End) - int(row.Start)) < int(row.SVLEN)) else int(row.End)
+    row.End_b = int(row.Start_b) + int(row.SVLEN_b) if ((int(row.End_b) - int(row.Start_b)) < int(row.SVLEN_b)) else int(row.End_b)
+    return(row)
+
 def convert_dict(pr):
     ## change a pyranges object into a dictionary
     ## input is a pyranges object
@@ -257,6 +264,7 @@ def convert_dict(pr):
     df["Overlap"] = df[["Start","End","Start_b","End_b","SV_ID_b"]].values.tolist()
     df["Fraction"] = df["Overlap"]
     df["Fraction_b"] = df["Overlap"]
+    df[df.SVTYPE == "INS"] = df[df.SVTYPE == "INS"].apply(INS_conv,axis=1)
     my_dict = df.groupby("SV_ID").agg({"Start": list, \
                                        "End": list, \
                                        "Start_b": list, \
@@ -583,8 +591,11 @@ def annotate(parser,args):
             print("Flipped to:")
             print(str(chrom) + "\t"+ str(start) + "\t" + str(end))
 
-        features = ["chrom","start","end","svtype","sv_id"]
-        variables = [chrom,start,end,svtype,sv_id]
+        ## Get SVLEN
+        svlen = abs(v.INFO.get("SVLEN")) if v.INFO.get("SVLEN") is not None else end - start
+
+        features = ["chrom","start","end","svlen","svtype","sv_id"]
+        variables = [chrom,start,end,svlen,svtype,sv_id]
         for i in range(len(features)):
             lists[features[i]].append(variables[i])
             svtype_lists[svtype][features[i]].append(variables[i])
@@ -619,11 +630,11 @@ def annotate(parser,args):
     ## some sources have limited annotations
     ## specify the ones you want to add here
     ## for now this needs to be hardcoded
-    source_cols = {}
-    source_cols["CCDG"] = [0]
-    source_cols["CEPH"] = list(list(range(0,14,1)) + [98,99])
-    source_cols["gnomAD"] = list(list(range(0,84,1)) + [98,99])
-    source_cols["1000G_Smoove"] = list(list(range(0,70,1)) + list(range(84,100,1)))
+#    source_cols = {}
+#    source_cols["CCDG"] = [0]
+#    source_cols["CEPH"] = list(list(range(0,14,1)) + [98,99])
+#    source_cols["gnomAD"] = list(list(range(0,84,1)) + [98,99])
+#    source_cols["1000G_Smoove"] = list(list(range(0,70,1)) + list(range(84,100,1)))
 
     ## main, default max annotations to add
     vcf.add_info_to_header({"ID": "Max_AF", "Description": "The maximum AF from all matching SVs across all specified data sources (" + ", ".join(req_sources) + ")", "Type": "Float", "Number": "1"})
@@ -770,6 +781,7 @@ def annotate(parser,args):
     pr_vcf = pr.from_dict({"Chromosome": lists["chrom"], \
                            "Start": lists["start"], \
                            "End": lists["end"], \
+                           "SVLEN": lists["svlen"], \
                            "SVTYPE": lists["svtype"], \
                            "SV_ID": lists["sv_id"]})
 
@@ -786,6 +798,7 @@ def annotate(parser,args):
         pr_bed = pr.from_dict({"Chromosome": bed_lists[source]["chrom"], \
                            "Start": bed_lists[source]["start"], \
                            "End": bed_lists[source]["end"], \
+                           "SVLEN": bed_lists[source]["svlen"], \
                            "SVTYPE": bed_lists[source]["svtype"], \
                            "SV_ID": bed_lists[source]["sv_id"]})
         joined = pr_vcf.join(pr_bed, how = "left").sort()
@@ -798,32 +811,38 @@ def annotate(parser,args):
         ##NOTE: Using mutliple CPUs for pyranges slows down the process 
 
         ## create SVTYPE matches dict
-        matches = convert_dict(pr_matches)
-        filtered_matches = reciprocal_overlap(matches,source,minfs)
-        filtered_matches_ids = defaultdict(list)
-        for sv_id in filtered_matches:
-            for i in filtered_matches[sv_id]["SV_ID_b"]:
-                filtered_matches_ids[sv_id].append(i)
-            join_matches[source][sv_id].extend(filtered_matches_ids[sv_id])
+        if pr_matches.empty:
+            print("There are no overlap matches for " + source)
+        if not pr_matches.empty:
+            matches = convert_dict(pr_matches)
+            filtered_matches = reciprocal_overlap(matches,source,minfs)
+            filtered_matches_ids = defaultdict(list)
+            for sv_id in filtered_matches:
+                for i in filtered_matches[sv_id]["SV_ID_b"]:
+                    filtered_matches_ids[sv_id].append(i)
+                join_matches[source][sv_id].extend(filtered_matches_ids[sv_id])
 
-        ## create SVTYPE best match dict
-        best_matches_ids = get_best(filtered_matches,source,datas)
-        for sv_id in best_matches_ids:
-            join_best_matches[source][sv_id].extend(best_matches_ids[sv_id])
+            ## create SVTYPE best match dict
+            best_matches_ids = get_best(filtered_matches,source,datas)
+            for sv_id in best_matches_ids:
+                join_best_matches[source][sv_id].extend(best_matches_ids[sv_id])
 
         ## create SVTYPE mismatches dict
-        mismatches = convert_dict(pr_mismatches)
-        filtered_mismatches = reciprocal_overlap(mismatches,source,minfs)
-        filtered_mismatches_ids = defaultdict(list)
-        for sv_id in filtered_mismatches:
-            for i in filtered_mismatches[sv_id]["SV_ID_b"]:
-                filtered_mismatches_ids[sv_id].append(i)
-            join_mismatches[source][sv_id].extend(filtered_mismatches_ids[sv_id])
+        if pr_mismatches.empty:
+            print("There are no overlap mismacthes for " + source)
+        if not pr_mismatches.empty:
+            mismatches = convert_dict(pr_mismatches)
+            filtered_mismatches = reciprocal_overlap(mismatches,source,minfs)
+            filtered_mismatches_ids = defaultdict(list)
+            for sv_id in filtered_mismatches:
+                for i in filtered_mismatches[sv_id]["SV_ID_b"]:
+                    filtered_mismatches_ids[sv_id].append(i)
+                join_mismatches[source][sv_id].extend(filtered_mismatches_ids[sv_id])
 
-        ## create SVTYPE best mismatch dict
-        best_mismatches_ids = get_best(filtered_mismatches,source,datas)
-        for sv_id in best_mismatches_ids:
-            join_best_mismatches[source][sv_id].extend(best_mismatches_ids[sv_id])
+            ## create SVTYPE best mismatch dict
+            best_mismatches_ids = get_best(filtered_mismatches,source,datas)
+            for sv_id in best_mismatches_ids:
+                join_best_mismatches[source][sv_id].extend(best_mismatches_ids[sv_id])
 
     ## identify SV overlaps with targets
     ## if -t invoked
