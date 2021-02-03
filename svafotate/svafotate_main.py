@@ -871,6 +871,7 @@ def annotate(parser,args):
             pr_vcf = pr.from_dict({"Chromosome": svtype_lists[svtype]['chrom'], \
                                    "Start": svtype_lists[svtype]['start'], \
                                    "End": svtype_lists[svtype]['end'], \
+                                   "SVLEN": svtype_lists[svtype]['svlen'], \
                                    "SVTYPE": svtype_lists[svtype]['svtype'], \
                                    "SV_ID": svtype_lists[svtype]['sv_id']})
 
@@ -888,13 +889,15 @@ def annotate(parser,args):
                 pr_bed = pr.from_dict({"Chromosome": fin_cov_lists['chrom'], \
                                        "Start": fin_cov_lists['start'], \
                                        "End": fin_cov_lists['end'], \
+                                       "SVLEN": fin_cov_lists['svlen'], \
                                        "SVTYPE": fin_cov_lists['svtype'], \
                                        "SV_ID": fin_cov_lists['sv_id']})
 
                 coveraged = pr_vcf.coverage(pr_bed, overlap_col="Overlaps", fraction_col="Coverage").sort()
-                covdf = coveraged.as_df()
-                covdict = dict(zip(covdf.SV_ID, covdf.Coverage))
-                covs.update(covdict)
+                if not coveraged.empty:
+                    covdf = coveraged.as_df()
+                    covdict = dict(zip(covdf.SV_ID, covdf.Coverage))
+                    covs.update(covdict)
 
             if args.uniq is not None:
                 print("\nRunning pyranges.subtract for:")
@@ -907,21 +910,23 @@ def annotate(parser,args):
                             fin_uniq_lists[key] = []
                         fin_uniq_lists[key].extend(uniq_lists[source][svtype][key])
 
-                    pr_bed = pr.from_dict({"Chromosome": fin_uniq_lists['chrom'], \
+                pr_bed = pr.from_dict({"Chromosome": fin_uniq_lists['chrom'], \
                                            "Start": fin_uniq_lists['start'], \
                                            "End": fin_uniq_lists['end'], \
+                                           "SVLEN": fin_uniq_lists['svlen'], \
                                            "SVTYPE": fin_uniq_lists['svtype'], \
                                            "SV_ID": fin_uniq_lists['sv_id']})
 
                 subtracted = pr_vcf.subtract(pr_bed).sort()
-                subdf = subtracted.as_df()
-                for i,row in subdf.iterrows():
-                    sv_id = row.SV_ID
-                    coord = "{}:{}-{}".format(row.Chromosome, row.Start, row.End)
-                    if sv_id not in uniqs:
-                        uniqs[sv_id] = []
+                if not subtracted.empty:
+                    subdf = subtracted.as_df()
+                    for i,row in subdf.iterrows():
+                        sv_id = row.SV_ID
+                        coord = "{}:{}-{}".format(row.Chromosome, row.Start, row.End)
+                        if sv_id not in uniqs:
+                            uniqs[sv_id] = []
                         uniqs[sv_id].append(coord)
-
+                            
     ## Create and output to uniques.bed
     ## if -u option invoked
     if args.uniq:
@@ -961,7 +966,7 @@ def annotate(parser,args):
                         new_uniq_lists[features[i]].append(variables[i])
                         
         ## Adding targets to uniques.bed if -t requested
-        if args.target:        
+        if args.target and len(uniqs) > 0:
             pr_uniq = pr.from_dict({"Chromosome": new_uniq_lists['chrom'], \
                                     "Start": new_uniq_lists['start'], \
                                     "End": new_uniq_lists['end'], \
