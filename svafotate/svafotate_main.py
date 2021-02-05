@@ -276,16 +276,16 @@ def convert_dict(pr):
     return(my_dict)
 
 
-def reciprocal_overlap(my_dict,source,minfs):
+def reciprocal_overlap(my_dict,source,minfs,svtypes):
     ## using minf, filter products of pyranges.join based on amount of reciprocal overlap
     ## expect dictionary (from convert_dict)
     ## returns dictionary of those that pass the filter
+    ## doesn't apply to INS
 
     minf = float(minfs[source])
     pass_filter = defaultdict(lambda: defaultdict(list))
 
     for sv_id in my_dict:
-
         for i in range(len(my_dict[sv_id]["Fraction"])):
             start = int(my_dict[sv_id]["Start"][i])
             end = int(my_dict[sv_id]["End"][i])
@@ -296,7 +296,18 @@ def reciprocal_overlap(my_dict,source,minfs):
             fract1 = float(my_dict[sv_id]["Fraction"][i])
             fract2 = float(my_dict[sv_id]["Fraction_b"][i])
 
-            if fract1 >= minf and fract2 >= minf:
+            if svtypes[sv_id] != "INS":
+                if fract1 >= minf and fract2 >= minf:
+                    pass_filter[sv_id]["Start"].append(start)
+                    pass_filter[sv_id]["End"].append(end)
+                    pass_filter[sv_id]["Start_b"].append(start2)
+                    pass_filter[sv_id]["End_b"].append(end2)
+                    pass_filter[sv_id]["SV_ID_b"].append(sv_id2)
+                    pass_filter[sv_id]["Overlap"].append(overlap)
+                    pass_filter[sv_id]["Fraction"].append(fract1)
+                    pass_filter[sv_id]["Fraction_b"].append(fract2)
+
+            elif svtypes[sv_id] == "INS":
                 pass_filter[sv_id]["Start"].append(start)
                 pass_filter[sv_id]["End"].append(end)
                 pass_filter[sv_id]["Start_b"].append(start2)
@@ -815,7 +826,7 @@ def annotate(parser,args):
             print("There are no overlap matches for " + source)
         if not pr_matches.empty:
             matches = convert_dict(pr_matches)
-            filtered_matches = reciprocal_overlap(matches,source,minfs)
+            filtered_matches = reciprocal_overlap(matches,source,minfs,svtypes)
             filtered_matches_ids = defaultdict(list)
             for sv_id in filtered_matches:
                 for i in filtered_matches[sv_id]["SV_ID_b"]:
@@ -832,7 +843,7 @@ def annotate(parser,args):
             print("There are no overlap mismacthes for " + source)
         if not pr_mismatches.empty:
             mismatches = convert_dict(pr_mismatches)
-            filtered_mismatches = reciprocal_overlap(mismatches,source,minfs)
+            filtered_mismatches = reciprocal_overlap(mismatches,source,minfs,svtypes)
             filtered_mismatches_ids = defaultdict(list)
             for sv_id in filtered_mismatches:
                 for i in filtered_mismatches[sv_id]["SV_ID_b"]:
