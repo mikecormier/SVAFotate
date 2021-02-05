@@ -261,10 +261,10 @@ def convert_dict(pr):
     ## input is a pyranges object
     ## returns a dictionary with main key, "SV_ID"
     df = pr.as_df()
+    df[df.SVTYPE == "INS"] = df[df.SVTYPE == "INS"].apply(INS_conv,axis=1)
     df["Overlap"] = df[["Start","End","Start_b","End_b","SV_ID_b"]].values.tolist()
     df["Fraction"] = df["Overlap"]
     df["Fraction_b"] = df["Overlap"]
-    df[df.SVTYPE == "INS"] = df[df.SVTYPE == "INS"].apply(INS_conv,axis=1)
     my_dict = df.groupby("SV_ID").agg({"Start": list, \
                                        "End": list, \
                                        "Start_b": list, \
