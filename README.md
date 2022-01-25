@@ -8,7 +8,7 @@ The main SVAFotate repo has been moved to [here](https://github.com/fakedrtom/SV
 
 Please use the new [SVAFotate](https://github.com/fakedrtom/SVAFotate) repo. 
 
-This repo is deprecated.
+**This repo is deprecated.**
 
 
 ## Installing SVAFotate
